@@ -13,6 +13,9 @@ Change log
 May 10, 2019
 -Initial upload to GIT hub
 
+May 11, 2019
+-Fixed sch tasks and email
+
 .DESCRIPTION
 Author oreynolds@gmail.com
 
@@ -50,7 +53,7 @@ $FilteredAssets = $XMLSet.Properties.Global.vMWARE.FilteredESXi.Asset
 $FilteredESXi = $XMLSet.Properties.Global.FilteredAssets.Asset
 $vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
 $DFSPath = $XMLSet.Properties.Global.DFSPath
-$SchTask = $XMLSet.Properties.Global.SchTask
+[String]$SchTask = $XMLSet.Properties.Global.SchTask
 
 ### Create empty arrays
 $ESXiHostSummary = @()
@@ -210,8 +213,14 @@ Function Get-HotfixRecent {
 }
 
 Function Get-SchedTasks {
-    Param($Asset)
-    $AllTasks = invoke-command -computername $Asset {Get-ScheduledTask -TaskPath "$SchTask" | Get-ScheduledTaskInfo } | Select-object TaskName, LastTaskResult, LastRunTime
+    Param($Asset, $SchTask)
+    
+    $AllTasks = invoke-command -computername $Asset {
+        Param($SchTask)    
+        Get-ScheduledTask -TaskPath $SchTask | Get-ScheduledTaskInfo 
+    
+    } -ArgumentList $SchTask | Select-object TaskName, LastTaskResult, LastRunTime
+    
     $TasksSummary = @()
 
     ForEach ($Task in $AllTasks) {    
@@ -365,7 +374,7 @@ write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
 $FSOwner = (Get-DFSNFolderTarget -path $DFSPath | Where-Object {$_.state -eq "Online"} | Select-object -expand TargetPath).Split("\")[2]
-$Section2 =  Get-SchedTasks -Asset $FSOwner
+$Section2 =  Get-SchedTasks -Asset $FSOwner -SchTask $SchTask
 
 ### Part XX - CTX XD scan
 
@@ -507,11 +516,9 @@ $Section4HTML = $DFSActive | ConvertTo-HTML -Head $Head -PreContent $Pre4 -As Ta
 $TSBody = ""
 $TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + $Section3cHTML
 
-# $TSBody | Out-File C:\inetpub\wwwroot\ServerScans\Current.htm
-
 $Subject = "Daily systems report for $ShortDate"
 Write-host "Sending message to $EmailTo" -ForegroundColor cyan
-Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $SMTPServer -UseSsl
+Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl
 
 $ScriptEnd = Get-Date
 
