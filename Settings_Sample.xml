@@ -1,0 +1,18 @@
+
+<!--
+This file is used to define key settings for the Get-AssetHealth.ps1 script
+You will need to amend the below values under <Global> to suit your own environment
+-->
+<Properties>
+    <Global>
+
+        <ADdomain>superdry.loc</ADdomain>
+        <vMWARE>
+            <vCenter>vc1.superdry.loc</vCenter>
+        </vMWARE>
+
+        <Email>"brave.scout@gmail.com"</Email>
+
+    </Global>
+
+</Properties>

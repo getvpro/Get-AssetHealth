@@ -3,116 +3,15 @@
 .FUNCTIONALITY
 Remote asset scan: Checks ping uptime, C drive size/space, licensed remaining days, will ID if asset is virtual/hardware type
 Part 1 Various tests on run based on the $Assets variable being populated via "Get-ADComputer -Filter *"
-Part 2 - Performs a status on Windows failover cluster $Cluster
+Part 2 - Scheduled tasks
+Part 3 - VMWARE asset info
+Part 4 - DFS scan
 
 .SYNOPSIS
 Change log
-Dec 26, 2017
-- Initial creation
 
-March 2, 2018
-- Changed PING method
-
-April 7, 2018
-- Added Licensed days left
-
-July 2, 2018
-- Email functionality added on July 2, 2018
-- Added C Drive scan
-
-July 4, 2018
-- $Server is now $Asset
-- Added Get-AssetType to ID physical , HyperV or Vmware
-- Amended get-Asset type method
-
-July 14, 2018
-- Added SQL cluster health check
-- Updated Google username/pw
-
-July 22, 2018
--Added get-powerplan
-
-July 27, 2018
--Added performance counters
-
-Aug 3, 2018
--Amended Part 3 - Cluster section
--If SQL1V is online, resources will be level-set to SQL1V
-
-Aug 4, 2018
--Added CTX CD infra/vda scans
--Added logging
-
-Aug 6, 2018
--Only RS1 and green-machine are exempted from reboots
-
-Sept 4, 2018
--Added CPU type
-
-Sept 30, 2018
--Removed filter on *GOL* as win 2016-gold and win10-gold will now be scanned
-
-Oct 10, 2018
--Added scans for cluster3 / file cluster
--Line 426 updated, amdended path from \\FS1V to \\FILECLUSTER
-
-Oct 13, 2018
--Updated all links from FS1V to FILECLUSTER
-
-Oct 20, 2018
--Minor updates to cluster functions
--Re-added call to move-cluster
-
-Oct 21, 2018
--Added function to check total memory
--Fileserver cluster resources are level-set as required
-
-Nov 9, 2018
--Output to HTML added for use with IIS dashboard eval
-
-Dec 26, 2018
--SyncBack scheduled task reporting info added
--Disabled moved cluster code on line 429, as SQL is now stand-alone as of Dec 24, 2018
-
-Jan 11, 2019
-- C drive size/free set to N/A on offline assets
-
-Feb 16, 2019
-- Added file and VM datastore scans (Setion 5)
--RS* filtered in $Rebootpool, Win10-Diana filtered, green-machine removed
--Header for part 1 amended
--Get-DrvSpace function updated to include option for other drive letters ("s", etc)
-
-Feb 23, 2019
--Replaced FILECLUSTER references to DFS
--Disabled Citrix scan code
--Disabled HTM output
--Disabled Licensed days scan as all physical assets are legally licensed, and virtual assets have a 10 year lifespan
-
-March 4, 2019
--Updated PW to secure string
-
-March 13, 2019
--Removed "data is from" on sections 2-4
-
-May 1, 2019
--Removed VHDX scan of main datastore from RS1, as that host is now ESXi, no longer Win 2019
--Now using AD1V.superdry.loc to get around new gmail account issues noted as of May 1, 2019
--Amended reports path to use DFS
-
-May 5, 2019
--$ESXiHosts to capture esxi hosts
-
-May 6, 2019
--Various code hygine amendments
--[math]::Round() added to $ESXihosts variable
-
-May 7, 2019
--Changed method to collect ESXIhost data to include VM count
-
-May 8, 2019
--Amended sort method for $ESXiHosts
--Set-VMStartPolicy used to level-set all on infra esxi vms to "any order" with a 30 second delay
+May 10, 2019
+-Initial upload to GIT hub
 
 .DESCRIPTION
 Author oreynolds@gmail.com
@@ -123,29 +22,50 @@ Author oreynolds@gmail.com
 .NOTES
 
 .Link
-N/A
+https://github.com/ovdamn/Get-AssetHealth
 
 #>
 
-$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
-$From = "brave.scout@gmail.com"
-$To = "oreynolds@gmail.com"
-$SMTPServer = "AD1V.superdry.loc"
-$ReportsPath = "\\superdry.loc\DFS\downloads\Software\SCRIPTS\WINDOWS SERVER\Server Scan\Reports"
-$ESXiInfraVMs = @("FS1V","FS2V","VC1","VC2","VC3","AD1V","AD2V","AD3V")
-$ESXiHostSummary = @()
+$XMLSet = ""
+[XML]$XMLSet = Get-Content ".\Settings.xml"
 
-If (!(test-path "\\superdry.loc\dfs\DOWNLOADS\Software\SCRIPTS\WINDOWS SERVER\Server Scan\Log\Server-Scan.log")) {
+IF (-not($XMLSet)) {
+    write-warning -Message "XML settings file not found, script will now exit"
+    EXIT
+}
 
-    Write-Warning "Creating log"
-    new-item -ItemType File -path "\\Superdry.loc\DFS\downloads\Software\SCRIPTS\WINDOWS SERVER\Server Scan\Log\Server-Scan.log"
-    add-content -Value "This log was created $(Get-Date)" -Path "\\Superdry.loc\DFS\downloads\Software\SCRIPTS\WINDOWS SERVER\Server Scan\Log\Server-Scan.log"
+Else {
+
+    Write-host "XML settings file will now be parsed and the script will start"
 
 }
 
-$Log = "\\Superdry.loc\DFS\downloads\Software\SCRIPTS\WINDOWS SERVER\Server Scan\Log\Server-Scan.log"
+$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+$EmailFrom = $XMLSet.Properties.Global.Email.From
+$EmailTo = $XMLSet.Properties.Global.Email.To
+$EmailSMTP = $XMLSet.Properties.Global.Email.SMTP
+$CSS = $XMLSet.Properties.Global.CSS
+$ReportsPath = $XMLSet.Properties.Global.ReportsPath
+$FilteredAssets = $XMLSet.Properties.Global.vMWARE.FilteredESXi.Asset
+$FilteredESXi = $XMLSet.Properties.Global.FilteredAssets.Asset
+$vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
+$DFSPath = $XMLSet.Properties.Global.DFSPath
+$SchTask = $XMLSet.Properties.Global.SchTask
 
+### Create empty arrays
+$ESXiHostSummary = @()
 $MainArray = @()
+
+$ScriptLog = $XMLSet.Properties.Global.ScriptLog
+
+If (!(test-path $ScriptLog)) {
+
+    Write-Warning "Creating log"
+    new-item -ItemType File -path $ScriptLog
+    add-content -Value "This log was created $(Get-Date)" -Path $ScriptLog
+
+}
+
 Function Ping-Asset {
   	Param ($Asset)
     
@@ -218,9 +138,7 @@ Function Get-AssetType {
 
     IF (($Type.Model -eq "Virtual Machine") -and ($Type.Manufacturer -eq "Microsoft Corporation")) {$AssetType = "Hyper-V VM"; write-host "$AssetType"}
         
-        ElseIF (($Type.model -eq "Vmware Virtual Platform") -and ($Type.Manufacturer -eq "VMware, Inc.")) {$AssetType = "VMware VM"; write-host "$AssetType"}
-        
-            ElseIF ($Type.Model -like "���������������������������������") {$AssetType = "Intel NUC";write-host "$AssetType"}
+        ElseIF (($Type.model -eq "Vmware Virtual Platform") -and ($Type.Manufacturer -eq "VMware, Inc.")) {$AssetType = "VMware VM"; write-host "$AssetType"}            
         
                 Else {$AssetType = $Type.Model; write-host "$AssetType Hardware"}
     
@@ -265,7 +183,7 @@ Function Move-Cluster {
 
         IF ($Section2 | Where-Object {$_.Ownernode -ne "$Asset"}) {
 
-            Add-content -Value "WARNING: Level-set of $Cluster resources performed @ $(Get-Date)" -Path $Log
+            Add-content -Value "WARNING: Level-set of $Cluster resources performed @ $(Get-Date)" -Path $ScriptLog
             Get-ClusterGroup -Cluster $Cluster | Move-ClusterGroup -Cluster $Cluster -Node $Asset
     
         }
@@ -291,12 +209,12 @@ Function Get-HotfixRecent {
     Return $HFX
 }
 
-Function Get-SyncBackSchedTasks {
-    Param($Asset)    
-    $SyncBackTasks = invoke-command -computername $Asset {Get-ScheduledTask -TaskPath "\2BrightSparks\SyncBackProx64\SUPERDRY-REQUISRV*"| Get-ScheduledTaskInfo } | Select-object TaskName, LastTaskResult, LastRunTime    
+Function Get-SchedTasks {
+    Param($Asset)
+    $AllTasks = invoke-command -computername $Asset {Get-ScheduledTask -TaskPath "$SchTask" | Get-ScheduledTaskInfo } | Select-object TaskName, LastTaskResult, LastRunTime
     $TasksSummary = @()
 
-    ForEach ($Task in $SyncBackTasks) {    
+    ForEach ($Task in $AllTasks) {    
 
         If ($Task.LastTaskResult -eq 0) {
 
@@ -331,23 +249,32 @@ Function Get-SyncBackSchedTasks {
     $TasksSummary = $TasksSummary | Sort-Object TaskName
     Return $TasksSummary
 
-} # End get-SyncBackSchedTasks
+} # End get-Tasks
 
 ### Core logic
 ### Get list of servers
 
 $ScriptStart = Get-Date
-Add-content -Value "Script started: $ScriptStart from asset $Env:Computername by user ID $Env:USERNAME" -Path $Log
+Add-content -Value "Script started: $ScriptStart from asset $Env:Computername by user ID $Env:USERNAME" -Path $ScriptLog
 
-import-module ActiveDirectory
+If (Get-Module -ListAvailable ActiveDirectory) {
+    
+    Write-host "Importing AD module"
+    import-module ActiveDirectory
 
-$Assets = Get-ADComputer -Filter * | Sort-Object DNSHostname | Select-object -Expand Name `
+}
+
+$Assets = Get-ADComputer -Filter * | Sort-Object DNSHostname | Select-object -Expand Name
+$Assets = $Assets | Where {$_ -notin $FilteredAssets}
+
+<#
 | Where-Object {$_ -notlike "RS1*"} `
 | Where-Object {$_ -notlike "*RS2*"} `
 | Where-Object {$_ -notlike "*RS3*"} `
 | Where-Object {$_ -notlike "*RS5*"} `
 | Where-Object {$_ -notlike "VC*"} `
 | Where-Object {$_ -notlike "*CLUSTER*"}
+#>
 
 $TotalAssets = $Assets | Measure-object | Select-object -expand Count
 $Count = 0
@@ -393,9 +320,7 @@ ForEach ($Asset in $Assets) {
             $PowerPlanActive = Get-PowerPlan -Asset $Asset
 
             write-host "Collecting most recent Hotfix"
-            $HotFixRecent = Get-HotfixRecent -Asset $Asset
-
-            
+            $HotFixRecent = Get-HotfixRecent -Asset $Asset           
  
     } #Ping        
 
@@ -439,17 +364,10 @@ ForEach ($Asset in $Assets) {
 write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
-$FSOwner = (Get-DFSNFolderTarget -path \\superdry.loc\DFS\downloads | Where-Object {$_.state -eq "Online"} | Select-object -expand TargetPath).Split("\")[2]
-$Section2 =  Get-SyncBackSchedTasks -Asset $FSOwner
+$FSOwner = (Get-DFSNFolderTarget -path $DFSPath | Where-Object {$_.state -eq "Online"} | Select-object -expand TargetPath).Split("\")[2]
+$Section2 =  Get-SchedTasks -Asset $FSOwner
 
-#write-host "Checking File Cluster server health"
-#$Section3 = Get-Cluster -Asset CLUSTER2
-
-### Level-set SQL cluster as required
-#Move-Cluster -Cluster Cluster1 -Asset SQL1V
-#Move-Cluster -Cluster Cluster2 -Asset FS1V
-
-### Part 4 - CTX XD scan
+### Part XX - CTX XD scan
 
 #write-host "Checking Citrix assets"
 #$CTXSite1VDAS = @(invoke-command -ComputerName XDC1V -ScriptBlock {
@@ -459,14 +377,7 @@ $Section2 =  Get-SyncBackSchedTasks -Asset $FSOwner
 
 #} | Select-object @{E={$_.DNsname};Name="VDA"}, RegistrationState , DesktopGroupName , @{E={$_.ControllerDNSName};Name="CTX DDC"}, @{E={$_.AgentVersion};Name="VDA Binary version"})
 
-#$CTXSite2VDAS = @(invoke-command -ComputerName XDC2V -ScriptBlock {
-
- #   Add-PSSnapin Citrix*
- #  Get-BrokerMachine    
-
-#} | Select-object @{E={$_.DNsname};Name="VDA"}, RegistrationState , DesktopGroupName , @{E={$_.ControllerDNSName};Name="CTX DDC"}, @{E={$_.AgentVersion};Name="VDA Binary version"})
-
-# $Section4 = $CTXSite1VDAS
+# $SectionXX = $CTXSite1VDAS
 
 ### Part 5a/b - VMWARE vCenter asset scan
 
@@ -474,10 +385,10 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
     write-host "Loading VMWARE PowerCLI"
     Import-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue
     #Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $False -Confirm:$False
-    Connect-VIServer -Server VC1.superdry.loc -force
+    Connect-VIServer -Server $vCenter -force
 
     write-host "Level set of VMs autostart"    
-    Get-VM | Where {$_.name -notin $ESXiInfraVMs} | Get-VMStartPolicy | Where StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
+    Get-VM | Where {$_.name -notin $FilteredESXi} | Get-VMStartPolicy | Where StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
 
     $ESXiVMS = Get-VM | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}}, PowerState, UsedSpaceGB, NumCPU, MemoryGB
     $ESXiDS = Get-DataStore | Select-object Name, State, Datacenter, CapacityGB, FreeSpaceGB | Sort-Object Name
@@ -507,8 +418,7 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
         "Host Memory in use (GB)" = $ESXiHostData."Host memory in use (GB)"
         }
 
-        $ESXiHostSummary += New-object PSObject -Property $Props | Select ESXiHost, PowerState, ConnectionState, Model, CPUType, CPUCount, "Host memory total (GB)", "Host memory in use (GB)", ESXIver, ESXIBuild, "VM Count"
-        #$ESXiHostSummary += $ESXiHostSummary | Select ESXiHost, PowerState, ConnectionState, Model, CPUType, CPUCount, "Host memory total (GB)", "Host memory in use (GB)", ESXIver, ESXIBuild, "VM Count"
+        $ESXiHostSummary += New-object PSObject -Property $Props | Select ESXiHost, PowerState, ConnectionState, Model, CPUType, CPUCount, "Host memory total (GB)", "Host memory in use (GB)", ESXIver, ESXIBuild, "VM Count"        
 
     } #ForEach $ESXihost
 }
@@ -524,14 +434,14 @@ Else {
 $Section1 = $MainArray | Select-object Asset, PingResults, UptimeDays, UptimeHigh, @{Expression={$_.cDriveSize};Label="C Drive Size (GB)"} , @{Expression={$_.CDriveFree};Label="C Drive Free (GB)"},`
 Type, CPU, Mem, OS, PowerPlan, HotFixRecent | Sort-Object UptimeDays -Descending
 
-$Section1 | Export-csv $ReportsPath\SDry-AssetScan-$Shortdate.csv -NoTypeInformation
+$Section1 | Export-csv $ReportsPath\AssetScan-$Shortdate.csv -NoTypeInformation
 
 ### Reboots of assets with uptime over 14 days
 
 write-host "Asset scan has completed at $(Get-date). Assets with 14 days or more will be rebooted"
 write-host "`r`n"
 
-$RebootPool = $Section1 | Where-Object {$_.UptimeHigh -eq "yes"} | Where-Object {$_.Asset -ne "Win10-Diana"} | Where-Object {$_.Asset -ne "DSPEC"} | Where-Object {$_.Asset -notlike "RS*"} | Select-object Asset
+$RebootPool = $Section1 | Where-Object {$_.UptimeHigh -eq "yes"} | Where-Object {$_.Asset -notin $FilteredReboot} | Select-object Asset
 
 ForEach ($Asset in $RebootPool) {
 
@@ -539,11 +449,11 @@ ForEach ($Asset in $RebootPool) {
     write-warning "Rebooting $Asset now"
     start-sleep -s 30
     restart-computer -ComputerName $Asset -Force -Timeout 60 -wait
-    add-content -Value "$Asset was rebooted on $(Get-date) by $Env:username" -path $Log
+    add-content -Value "$Asset was rebooted on $(Get-date) by $Env:username" -path $ScriptLog
 }
 
 ### Email code
-$Head = Get-Content "\\Superdry.loc\DFS\Downloads\Software\SCRIPTS\WINDOWS SERVER\Server Scan\CSS\CSS.XML"
+$Head = Get-Content $CSS
 
 ### Section 1
 $Pre1 = "<H2>Part 1 - Desktop, laptop, server overview data (ping, uptime, C drive free space, hot fix installs) - Data is from $(Get-Date)</H2>"
@@ -552,7 +462,7 @@ $Section1HTML = $Section1 | ConvertTo-HTML -Head $Head -PreContent $Pre1 -As Tab
 
 ### Section 2
 $Pre2 = "<br><br>"
-$Pre2 += "<H2>Part 2 - SyncBack scheduled tasks report</H2>"
+$Pre2 += "<H2>Part 2 - Scheduled tasks report</H2>"
 $Pre2 += "<br><br>"
 $Section2HTML = $Section2 | ConvertTo-HTML -Head $Head -PreContent $Pre2 -As Table | Out-String
 
@@ -600,8 +510,8 @@ $TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTM
 # $TSBody | Out-File C:\inetpub\wwwroot\ServerScans\Current.htm
 
 $Subject = "Daily systems report for $ShortDate"
-Write-host "Sending message to $To" -ForegroundColor cyan
-Send-MailMessage -From $From -to $To -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $SMTPServer -UseSsl
+Write-host "Sending message to $EmailTo" -ForegroundColor cyan
+Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $SMTPServer -UseSsl
 
 $ScriptEnd = Get-Date
 
@@ -610,5 +520,4 @@ $Hours = $TotalScriptTime | Select-object -expand Hours
 $Mins = $TotalScriptTime | Select-object -expand Minutes
 $Seconds = $TotalScriptTime | Select-object -expand Seconds
 
-Add-content -Value "Script ended @: $ScriptEnd. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Path $Log
-
+Add-content -Value "Script ended @: $ScriptEnd. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Path $ScriptLog
