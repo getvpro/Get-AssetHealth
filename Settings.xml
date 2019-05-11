@@ -1,0 +1,12 @@
+<Properties>
+    <Global>
+
+        <ADdomain>superdry.loc</ADdomain>
+
+        <vMWARE>
+            <vCenter>vc1.superdry.loc</vCenter>
+        </vMWARE>
+
+    </Global>
+
+</Properties>
