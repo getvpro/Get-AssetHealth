@@ -14,7 +14,7 @@ May 12, 2019
 -->
 <Properties>
     <Global>
-        <CSS>\\Domainname.loc\DFS\Folder\SubFolder\Get-AssetHealth\CSS\CSS.XML</CSS>        
+        <CSS>\\ADPATH\DFS\Folder\SubFolder\Get-AssetHealth\CSS\CSS.XML</CSS>        
         
         <ADdomain>FQDN HERE</ADdomain>
 
