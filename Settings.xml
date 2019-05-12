@@ -1,17 +1,52 @@
 
 <!--
 This file is used to define key settings for the Get-AssetHealth.ps1 script
-You will need to amend the below values under <Global> to suit your own environment
+
+.NOTES
+
+May 10, 2019
+-Initial creation
+
+May 12, 2019
+-New values for updated GIT upload
+
+
 -->
 <Properties>
     <Global>
+        <CSS>\\Domainname.loc\DFS\Folder\SubFolder\Get-AssetHealth\CSS\CSS.XML</CSS>        
+        
+        <ADdomain>FQDN HERE</ADdomain>
 
-        <ADdomain>superdry.loc</ADdomain>
-        <vMWARE>
-            <vCenter>vc1.superdry.loc</vCenter>
-        </vMWARE>
+        <VMWARE>
+            <vCenter>vmware vcenter / VCSA FQDN</vCenter>
 
-        <Email>"brave.scout@gmail.com"</Email>
+            <FilteredESXi>
+                <Asset>ESXi VM name you don't want rebooted here</Asset>                
+            </FilteredESXi>
+            
+        </VMWARE>
+
+        <Email>
+            <From>first.last@email.com</From>
+            <To>some.person@you.com</To>
+            <SMTP>FQDN.YourOrg.net</SMTP>
+        </Email>
+
+        <DFSPath>\\FQDN.NET\SUB\FOLDER</DFSPath>
+        
+        <SchTask>\Path\SubPath</SchTask>
+
+        <ScriptLog>\\FQDN\Sub\Folder\Asset-Scan\Asset-Scan.log</ScriptLog>
+        <ReportsPath>\\FQDN\Sub\Folder\Asset-Scan\Reports</ReportsPath>
+
+        <FilteredAssets>            
+            <Asset>NETBIOSNAME</Asset>            
+        </FilteredAssets>
+
+        <FilteredReboot>
+            <Asset>PC Name you don't want rebooted</Asset>            
+        </FilteredReboot>
 
     </Global>
 
