@@ -15,6 +15,18 @@ May 10, 2019
 
 May 11, 2019
 -Fixed sch tasks and email
+-Used space (GB) rounded to 2 $ places
+
+May 12, 2019
+-Datastore total rounded to 2 decimal places
+
+May 12, 2019
+-$RunningPath created to find correct path to XML
+-Write-Log2TXT function added
+-Write-EventLog used for key events
+
+May 13, 2019
+-$Running path captured in txt/evt logs
 
 .DESCRIPTION
 Author oreynolds@gmail.com
@@ -29,21 +41,41 @@ https://github.com/ovdamn/Get-AssetHealth
 
 #>
 
+### Non-XML variables, amend as required for your environment
+$EventIDSrc = "Asset Scan"
+$EventIDSection = "Application"
+[Int32]$EventID = 0
+$RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
+$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+$ESXiHostSummary = @()
+$MainArray = @()
+
+If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
+    
+    write-host "Creating $EventIDSrc"
+    New-EventLog -LogName $EventIDSection -Source $EventIDSrc
+
+}
+
 $XMLSet = ""
-[XML]$XMLSet = Get-Content ".\Settings.xml"
+[XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
+
 
 IF (-not($XMLSet)) {
-    write-warning -Message "XML settings file not found, script will now exit"
+
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType Warning -Message "XML settings file not found under $RunningPath, script will now exit"
+    write-warning -Message "XML settings file not found under $RunningPath, script will now exit"    
     EXIT
 }
 
 Else {
 
-    Write-host "XML settings file will now be parsed and the script will start"
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType INFO -Message "Settings will be enumerated from XML settings file found under $RunningPath"
+    Write-Log2TXT -Message "Settings will be enumerated from XML settings file found under $RunningPath" -Level info -ScriptLog $ScriptLog
 
 }
 
-$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+### Variables from XML
 $EmailFrom = $XMLSet.Properties.Global.Email.From
 $EmailTo = $XMLSet.Properties.Global.Email.To
 $EmailSMTP = $XMLSet.Properties.Global.Email.SMTP
@@ -54,29 +86,61 @@ $FilteredESXi = $XMLSet.Properties.Global.FilteredAssets.Asset
 $vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
 $DFSPath = $XMLSet.Properties.Global.DFSPath
 [String]$SchTask = $XMLSet.Properties.Global.SchTask
-
-### Create empty arrays
-$ESXiHostSummary = @()
-$MainArray = @()
-
 $ScriptLog = $XMLSet.Properties.Global.ScriptLog
 
 If (!(test-path $ScriptLog)) {
 
     Write-Warning "Creating log"
     new-item -ItemType File -path $ScriptLog
-    add-content -Value "This log was created $(Get-Date)" -Path $ScriptLog
+    Write-Log2TXT -Message "$SciptLog created" -ScriptLog $ScriptLog -Level info    
 
 }
 
+### Functions
+
+Function Write-Log2TXT {
+    Param(
+    [String]$ScriptLog,    
+    [String]$Message,
+    [String]$Level
+    )
+
+    switch ($Level) { 
+        'Error' 
+            {
+            $LevelText = 'ERROR:' 
+            $Message = "$(Get-Date): $LevelText Ran from $Env:computername by $($Env:Username): $Message"
+            Write-host $Message -ForegroundColor RED            
+            } 
+        
+        'Warn'
+            { 
+            $LevelText = 'WARNING:' 
+            $Message = "$(Get-Date): $LevelText Ran from $Env:computername by $($Env:Username): $Message"
+            Write-host $Message -ForegroundColor YELLOW            
+            } 
+
+        'Info'
+            { 
+            $LevelText = 'INFO:' 
+            $Message = "$(Get-Date): $LevelText Ran from $Env:computername by $($Env:Username): $Message"
+            Write-host $Message -ForegroundColor GREEN            
+            } 
+
+        }
+        
+        Add-content -value "$Message" -Path $ScriptLog
+}
+
+
 Function Ping-Asset {
-  	Param ($Asset)
+  	Param($Asset)
     
 	$error.clear()
 
     try {
-
-		write-host "Checking if $Asset is online"
+        
+        Write-host -Object "Checking if $Asset is online"
         $PingTest = test-connection $Asset -count 3 -EA 0	    
 
     }
@@ -186,7 +250,7 @@ Function Move-Cluster {
 
         IF ($Section2 | Where-Object {$_.Ownernode -ne "$Asset"}) {
 
-            Add-content -Value "WARNING: Level-set of $Cluster resources performed @ $(Get-Date)" -Path $ScriptLog
+            Write-Log2TXT -Message "Level-set of $Cluster resources performed" -Level WARN -ScriptLog $ScriptLog            
             Get-ClusterGroup -Cluster $Cluster | Move-ClusterGroup -Cluster $Cluster -Node $Asset
     
         }
@@ -260,11 +324,11 @@ Function Get-SchedTasks {
 
 } # End get-Tasks
 
-### Core logic
+### START ME UP
 ### Get list of servers
 
 $ScriptStart = Get-Date
-Add-content -Value "Script started: $ScriptStart from asset $Env:Computername by user ID $Env:USERNAME" -Path $ScriptLog
+Write-Log2TXT -Message "Script started" -Level INFO -ScriptLog $ScriptLog
 
 If (Get-Module -ListAvailable ActiveDirectory) {
     
@@ -276,28 +340,28 @@ If (Get-Module -ListAvailable ActiveDirectory) {
 $Assets = Get-ADComputer -Filter * | Sort-Object DNSHostname | Select-object -Expand Name
 $Assets = $Assets | Where {$_ -notin $FilteredAssets}
 
-<#
-| Where-Object {$_ -notlike "RS1*"} `
-| Where-Object {$_ -notlike "*RS2*"} `
-| Where-Object {$_ -notlike "*RS3*"} `
-| Where-Object {$_ -notlike "*RS5*"} `
-| Where-Object {$_ -notlike "VC*"} `
-| Where-Object {$_ -notlike "*CLUSTER*"}
-#>
+If (-not($Assets)) {
+
+    Write-Log2TXT -Message "The list of assets was not populated. As such, the script will exit" -Level ERROR -ScriptLog $ScriptLog
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "The list of assets was not populated. As such, the script will exit" -EntryType Error
+    EXIT
+}
 
 $TotalAssets = $Assets | Measure-object | Select-object -expand Count
 $Count = 0
+
+Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventID $EventID -Message "$TotalAssets assets will be checked" -EntryType Information
 
 ForEach ($Asset in $Assets) {
 
     write-host "`r`n"
     write-host "$Count of $TotalAssets checked so far" -ForegroundColor Cyan
     write-host "___________________________________________________________"
-    write-host "`r`n"
+    write-host "`r`n"    
     
     write-host "Checking $Asset"
     
-    $Ping = Ping-Asset $Asset
+    $Ping = Ping-Asset $Asset -ScriptLog $ScriptLog
 
     If ($Ping -eq "Online") {
         
@@ -399,8 +463,11 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
     write-host "Level set of VMs autostart"    
     Get-VM | Where {$_.name -notin $FilteredESXi} | Get-VMStartPolicy | Where StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
 
-    $ESXiVMS = Get-VM | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}}, PowerState, UsedSpaceGB, NumCPU, MemoryGB
-    $ESXiDS = Get-DataStore | Select-object Name, State, Datacenter, CapacityGB, FreeSpaceGB | Sort-Object Name
+    $ESXiVMS = Get-VM | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}},`
+    PowerState,@{E={[math]::Round($_.UsedSpaceGB,2)};Name="Used Space (GB)"}, NumCPU, MemoryGB
+    
+    $ESXiDS = Get-DataStore | Select-object Name, State, Datacenter, CapacityGB, @{E={[Math]::Round($_.FreeSpaceGB,2)};Label="Free Space (GB)"} | Sort-Object Name
+    
     $TotalESXiDS = $ESXiDS | Measure-Object | Select-object -ExpandProperty Count
     $TotalESXiVMs = $ESXiVMS | Measure-Object | Select-object -ExpandProperty Count    
     
@@ -411,7 +478,7 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
         write-host "Checking $ESXiVMHost.name"
         $ESXIVmCount = Get-VMhost -Name $ESXiVMHost.name  | Get-VM | Measure-Object | Select-Object -ExpandProperty Count
         $ESXiHostData = Get-VMHost -name $ESXiVMHost.name  | Select-object Name, ConnectionState, PowerState, Model, NumCPU, ProcessorType, Version, Build,`
-        @{E={[math]::Round($_.MemoryTotalGB,2)};Label='Host Memory (GB)'}, @{E={[math]::Round($_.MemoryUsageGB,2)};Label="Host memory in use (GB)"}    
+        @{E={[math]::Round($_.MemoryTotalGB,2)};Label='Host Memory (GB)'}, @{E={[math]::Round($_.MemoryUsageGB,2)};Label="Host memory in use (GB)"}
     
         $Props =@{
         "VM Count" = $ESXIVmCount
@@ -458,7 +525,7 @@ ForEach ($Asset in $RebootPool) {
     write-warning "Rebooting $Asset now"
     start-sleep -s 30
     restart-computer -ComputerName $Asset -Force -Timeout 60 -wait
-    add-content -Value "$Asset was rebooted on $(Get-date) by $Env:username" -path $ScriptLog
+    Write-Log2TXT -message "$Asset was rebooted" -Level WARN -ScriptLog $ScriptLog
 }
 
 ### Email code
@@ -517,7 +584,7 @@ $TSBody = ""
 $TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + $Section3cHTML
 
 $Subject = "Daily systems report for $ShortDate"
-Write-host "Sending message to $EmailTo" -ForegroundColor cyan
+Write-Log2TXT -Message "Sending message to $EmailTo" -Level INFO -ScriptLog
 Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl
 
 $ScriptEnd = Get-Date
@@ -527,4 +594,5 @@ $Hours = $TotalScriptTime | Select-object -expand Hours
 $Mins = $TotalScriptTime | Select-object -expand Minutes
 $Seconds = $TotalScriptTime | Select-object -expand Seconds
 
-Add-content -Value "Script ended @: $ScriptEnd. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Path $ScriptLog
+Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventID $EventID -EntryType Information -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds"
+Write-Log2TXT -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Level INFO -ScriptLog $ScriptLog
