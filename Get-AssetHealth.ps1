@@ -28,6 +28,10 @@ May 12, 2019
 May 13, 2019
 -$Running path captured in txt/evt logs
 
+May 14, 2019
+-Part 4 now XTRA, enabled code to capture current DFS owner
+-Part 3b now captures VMWARE DRS events instead of data store info
+
 .DESCRIPTION
 Author oreynolds@gmail.com
 
@@ -47,6 +51,7 @@ $EventIDSection = "Application"
 [Int32]$EventID = 0
 $RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
 $ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+
 $ESXiHostSummary = @()
 $MainArray = @()
 
@@ -60,6 +65,7 @@ If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
 $XMLSet = ""
 [XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
 
+$ScriptLog = $XMLSet.Properties.Global.ScriptLog
 
 IF (-not($XMLSet)) {
 
@@ -86,7 +92,7 @@ $FilteredESXi = $XMLSet.Properties.Global.FilteredAssets.Asset
 $vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
 $DFSPath = $XMLSet.Properties.Global.DFSPath
 [String]$SchTask = $XMLSet.Properties.Global.SchTask
-$ScriptLog = $XMLSet.Properties.Global.ScriptLog
+
 
 If (!(test-path $ScriptLog)) {
 
@@ -440,19 +446,7 @@ write-host "Checking scheduled tasks on various servers"
 $FSOwner = (Get-DFSNFolderTarget -path $DFSPath | Where-Object {$_.state -eq "Online"} | Select-object -expand TargetPath).Split("\")[2]
 $Section2 =  Get-SchedTasks -Asset $FSOwner -SchTask $SchTask
 
-### Part XX - CTX XD scan
-
-#write-host "Checking Citrix assets"
-#$CTXSite1VDAS = @(invoke-command -ComputerName XDC1V -ScriptBlock {
-
- #   Add-PSSnapin Citrix*
- #   Get-BrokerMachine    
-
-#} | Select-object @{E={$_.DNsname};Name="VDA"}, RegistrationState , DesktopGroupName , @{E={$_.ControllerDNSName};Name="CTX DDC"}, @{E={$_.AgentVersion};Name="VDA Binary version"})
-
-# $SectionXX = $CTXSite1VDAS
-
-### Part 5a/b - VMWARE vCenter asset scan
+### Part 3a/b/c - VMWARE vCenter asset scan
 
 IF (Get-Module -name vmware.powercli -ListAvailable) {
     write-host "Loading VMWARE PowerCLI"
@@ -506,6 +500,17 @@ Else {
 
 }
 
+$DRSEventsToday = Get-VIEvent -MaxSamples 500 -Start $(Get-Date).ToString('MM/dd/yyyy') | Where {$_.FullFormattedMessage -like "*Migrating*"} `
+| Where {$_.Objectname -ne $Null} | Select @{E={$_.Objectname};Name="VM"}, @{E={$_.CreatedTime};Name="Time"}, @{E={$_.FullFormattedMessage};Name="DRS vMotion detail"} | Sort VM -Unique
+
+
+If (-not($DRSEventsToday)) {
+
+    $DRSEventsToday = "No DRS events recorded for $($(Get-Date).ToString('MM/dd/yyyy'))"
+
+}
+
+
 ### Data Summary
 $Section1 = $MainArray | Select-object Asset, PingResults, UptimeDays, UptimeHigh, @{Expression={$_.cDriveSize};Label="C Drive Size (GB)"} , @{Expression={$_.CDriveFree};Label="C Drive Free (GB)"},`
 Type, CPU, Mem, OS, PowerPlan, HotFixRecent | Sort-Object UptimeDays -Descending
@@ -539,52 +544,39 @@ $Section1HTML = $Section1 | ConvertTo-HTML -Head $Head -PreContent $Pre1 -As Tab
 ### Section 2
 $Pre2 = "<br><br>"
 $Pre2 += "<H2>Part 2 - Scheduled tasks report</H2>"
-$Pre2 += "<br><br>"
 $Section2HTML = $Section2 | ConvertTo-HTML -Head $Head -PreContent $Pre2 -As Table | Out-String
 
 ## Section 3a - Vmware assets  
 $Pre3a = "<br><br>"
 $Pre3a += "<H2>Part 3a - VMWARE vCenter asset report ($TotalESXIVMs VMS) </H2>"
-$Pre3a += "<br><br>"
 $Section3aHTML = $ESXiVMS | ConvertTo-HTML -Head $Head -PreContent $Pre3a -As Table | Out-String
 
-## Section 3b - Vmware assets
+<## Section 3b - Vmware Datastore (Dormant as of May 14, 2019)
 $Pre3b = "<br><br>"
 $Pre3b += "<H2>Part 3b - VMWARE vCenter DataStore report ($TotalESXiDS datastores)</H2>"
 $Pre3b += "<br><br>"
 $Section3bHTML = $ESXiDS | ConvertTo-HTML -Head $Head -PreContent $Pre3b -As Table | Out-String
+#>
+
+## Section 3b - VMWARE DRS events
+$Pre3b = "<br><br>"
+$Pre3b += "<H2>Part 3b - VMWARE vCenter DRS events from today</H2>"
+$Section3bHTML = $DRSEventsToday | ConvertTo-HTML -Head $Head -PreContent $Pre3b -As Table | Out-String
 
 ## Section 3c - Vmware hosts
 $Pre3c = "<br><br>"
 $Pre3c += "<H2>Part 3c - VMWARE vCenter hosts</H2>"
-$Pre3c += "<br><br>"
 $Section3cHTML = $ESXiHostSummary | ConvertTo-HTML -Head $Head -PreContent $Pre3c -As Table | Out-String
 
-### Section 4 - DFS
-$DFSActive = (Get-DfsnFolderTarget -Path "\\Superdry.loc\DFS\Downloads" | Where-Object State -eq Online).Targetpath.Split("\\")[2]
-$Pre4 = "<br><br>"
-$Pre4 += "<H2>Part 4 - DFS Owner</H2>"
-$Pre4 += "<br><br>"
-$Section4HTML = $DFSActive | ConvertTo-HTML -Head $Head -PreContent $Pre4 -As Table | Out-String
-
-### Section XX
-#$Pre4 = "<br><br>"
-#$Pre4 += "<H2>Part 4 - Citrix XenDesktop Report - data is from $(Get-Date)</H2>"
-#$Pre4 += "<br><br>"
-#$Section4HTML = $Section4 | ConvertTo-HTML -Head $Head -PreContent $Pre4 -As Table | Out-String
-
-### Section  XX - DORMANT
-#$Pre4 = "<br><br>"
-#$Pre4 += "<H2>Part 3 - Performance Counters - data is from $(Get-Date)</H2>"
-#$Pre4 += "<br><br>"
-#$Section3HTML = $Section4 | ConvertTo-HTML -Head $Head -PreContent $Pre4 -As Table | Out-String
+### Section XTRA - DFS
+$Pre4 += "<H2>XTRA - Current DFS Owner: $FSOwner</H2>"
 
 ## Combine sections
 $TSBody = ""
-$TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + $Section3cHTML
+$TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + "$Section3cHTML" + "$Pre4"
 
 $Subject = "Daily systems report for $ShortDate"
-Write-Log2TXT -Message "Sending message to $EmailTo" -Level INFO -ScriptLog
+Write-Log2TXT -Message "Sending message to $EmailTo" -Level INFO -ScriptLog $ScriptLog
 Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl
 
 $ScriptEnd = Get-Date
