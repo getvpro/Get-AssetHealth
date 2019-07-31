@@ -22,7 +22,7 @@ May 12, 2019
 
 May 12, 2019
 -$RunningPath created to find correct path to XML
--Write-Log2TXT function added
+-Write-CustomLog function added
 -Write-EventLog used for key events
 
 May 13, 2019
@@ -31,6 +31,26 @@ May 13, 2019
 May 14, 2019
 -Part 4 now XTRA, enabled code to capture current DFS owner
 -Part 3b now captures VMWARE DRS events instead of data store info
+
+May 15, 2019
+-Amended logic for DRS section text
+-Removed XTRA section, moved to newly re-named Part 2
+
+June 21, 2019
+-Changes to Write-CustomLog to include write-eventlog
+
+June 26, 2019
+-Get-VMhost | Get-VMHostStartPolicy | Where {$_.enabled -eq $False} | Set-VMHostStartPolicy -Enabled
+
+July 25, 2019
+-Re-added VMWARE datastore
+
+July 26, 2019
+-Corrected missing $True on Set-StartPolicy
+
+July 28, 2019
+-Get-VIEvent -MaxSamples changed to 10000 to accomodate for vCenter setups where vSan is enabled
+-VMWARE Datastore capacity rounded
 
 .DESCRIPTION
 Author oreynolds@gmail.com
@@ -44,67 +64,9 @@ Author oreynolds@gmail.com
 https://github.com/ovdamn/Get-AssetHealth
 
 #>
-
-### Non-XML variables, amend as required for your environment
-$EventIDSrc = "Asset Scan"
-$EventIDSection = "Application"
-[Int32]$EventID = 0
-$RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
-$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
-
-$ESXiHostSummary = @()
-$MainArray = @()
-
-If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
-    
-    write-host "Creating $EventIDSrc"
-    New-EventLog -LogName $EventIDSection -Source $EventIDSrc
-
-}
-
-$XMLSet = ""
-[XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
-
-$ScriptLog = $XMLSet.Properties.Global.ScriptLog
-
-IF (-not($XMLSet)) {
-
-    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType Warning -Message "XML settings file not found under $RunningPath, script will now exit"
-    write-warning -Message "XML settings file not found under $RunningPath, script will now exit"    
-    EXIT
-}
-
-Else {
-
-    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType INFO -Message "Settings will be enumerated from XML settings file found under $RunningPath"
-    Write-Log2TXT -Message "Settings will be enumerated from XML settings file found under $RunningPath" -Level info -ScriptLog $ScriptLog
-
-}
-
-### Variables from XML
-$EmailFrom = $XMLSet.Properties.Global.Email.From
-$EmailTo = $XMLSet.Properties.Global.Email.To
-$EmailSMTP = $XMLSet.Properties.Global.Email.SMTP
-$CSS = $XMLSet.Properties.Global.CSS
-$ReportsPath = $XMLSet.Properties.Global.ReportsPath
-$FilteredAssets = $XMLSet.Properties.Global.vMWARE.FilteredESXi.Asset
-$FilteredESXi = $XMLSet.Properties.Global.FilteredAssets.Asset
-$vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
-$DFSPath = $XMLSet.Properties.Global.DFSPath
-[String]$SchTask = $XMLSet.Properties.Global.SchTask
-
-
-If (!(test-path $ScriptLog)) {
-
-    Write-Warning "Creating log"
-    new-item -ItemType File -path $ScriptLog
-    Write-Log2TXT -Message "$SciptLog created" -ScriptLog $ScriptLog -Level info    
-
-}
-
 ### Functions
 
-Function Write-Log2TXT {
+Function Write-CustomLog {
     Param(
     [String]$ScriptLog,    
     [String]$Message,
@@ -256,7 +218,7 @@ Function Move-Cluster {
 
         IF ($Section2 | Where-Object {$_.Ownernode -ne "$Asset"}) {
 
-            Write-Log2TXT -Message "Level-set of $Cluster resources performed" -Level WARN -ScriptLog $ScriptLog            
+            Write-CustomLog -Message "Level-set of $Cluster resources performed" -Level WARN -ScriptLog $ScriptLog            
             Get-ClusterGroup -Cluster $Cluster | Move-ClusterGroup -Cluster $Cluster -Node $Asset
     
         }
@@ -330,11 +292,71 @@ Function Get-SchedTasks {
 
 } # End get-Tasks
 
+
+### Non-XML variables, amend as required for your environment
+$EventIDSrc = "Asset Scan"
+$EventIDSection = "Application"
+[Int32]$EventID = 0
+$RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
+$ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+
+$ESXiHostSummary = @()
+$MainArray = @()
+
+If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
+    
+    write-host "Creating $EventIDSrc"
+    New-EventLog -LogName $EventIDSection -Source $EventIDSrc
+
+}
+
+$XMLSet = ""
+[XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
+
+$ScriptLog = $XMLSet.Properties.Global.ScriptLog
+
+IF (-not($XMLSet)) {
+
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType Warning -Message "XML settings file not found under $RunningPath, script will now exit"
+    write-warning -Message "XML settings file not found under $RunningPath, script will now exit"    
+    EXIT
+}
+
+Else {
+
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventId $EventID -EntryType INFO -Message "Settings will be enumerated from XML settings file found under $RunningPath"
+    Write-CustomLog -Message "Settings will be enumerated from XML settings file found under $RunningPath" -Level info -ScriptLog $ScriptLog
+
+}
+
+### Variables from XML
+$EmailFrom = $XMLSet.Properties.Global.Email.From
+$EmailTo = $XMLSet.Properties.Global.Email.To
+$EmailSMTP = $XMLSet.Properties.Global.Email.SMTP
+$CSS = $XMLSet.Properties.Global.CSS
+$ReportsPath = $XMLSet.Properties.Global.ReportsPath
+$FilteredAssets = $XMLSet.Properties.Global.FilteredAssets.Asset
+$FilteredESXi = $XMLSet.Properties.Global.vMWARE.FilteredESXi.Asset
+$vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
+$DFSPath = $XMLSet.Properties.Global.DFSPath
+[String]$SchTask = $XMLSet.Properties.Global.SchTask
+
+
+If (!(test-path $ScriptLog)) {
+
+    Write-Warning "Creating log"
+    new-item -ItemType File -path $ScriptLog
+    Write-CustomLog -Message "$SciptLog created" -ScriptLog $ScriptLog -Level info    
+
+}
+
+### FUNCTIONS
+
 ### START ME UP
 ### Get list of servers
 
 $ScriptStart = Get-Date
-Write-Log2TXT -Message "Script started" -Level INFO -ScriptLog $ScriptLog
+Write-CustomLog -Message "Script started" -Level INFO -ScriptLog $ScriptLog
 
 If (Get-Module -ListAvailable ActiveDirectory) {
     
@@ -348,7 +370,7 @@ $Assets = $Assets | Where {$_ -notin $FilteredAssets}
 
 If (-not($Assets)) {
 
-    Write-Log2TXT -Message "The list of assets was not populated. As such, the script will exit" -Level ERROR -ScriptLog $ScriptLog
+    Write-CustomLog -Message "The list of assets was not populated. As such, the script will exit" -Level ERROR -ScriptLog $ScriptLog
     Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "The list of assets was not populated. As such, the script will exit" -EntryType Error
     EXIT
 }
@@ -366,6 +388,7 @@ ForEach ($Asset in $Assets) {
     write-host "`r`n"    
     
     write-host "Checking $Asset"
+    Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "Checking $Asset" -EntryType Information
     
     $Ping = Ping-Asset $Asset -ScriptLog $ScriptLog
 
@@ -440,6 +463,7 @@ ForEach ($Asset in $Assets) {
 ### End of Part 1 - main scan
 
 ### Part 2 - Scheduled tasks
+Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "Part 2 - collecting schedled tasks" -EntryType Information
 write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
@@ -448,19 +472,22 @@ $Section2 =  Get-SchedTasks -Asset $FSOwner -SchTask $SchTask
 
 ### Part 3a/b/c - VMWARE vCenter asset scan
 
+Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "Part 3 - vmware vCenter asset scan" -EntryType Information
+
 IF (Get-Module -name vmware.powercli -ListAvailable) {
     write-host "Loading VMWARE PowerCLI"
     Import-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue
     #Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $False -Confirm:$False
     Connect-VIServer -Server $vCenter -force
 
-    write-host "Level set of VMs autostart"    
+    write-host "Level set of VMs autostart"
+    Get-VMhost | Get-VMHostStartPolicy | Where {$_.enabled -eq $False} | Set-VMHostStartPolicy -Enabled:$True
     Get-VM | Where {$_.name -notin $FilteredESXi} | Get-VMStartPolicy | Where StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
 
     $ESXiVMS = Get-VM | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}},`
-    PowerState,@{E={[math]::Round($_.UsedSpaceGB,2)};Name="Used Space (GB)"}, NumCPU, MemoryGB
+    PowerState, @{E={[math]::Round($_.UsedSpaceGB,2)};Name="Used Space (GB)"}, NumCPU, MemoryGB
     
-    $ESXiDS = Get-DataStore | Select-object Name, State, Datacenter, CapacityGB, @{E={[Math]::Round($_.FreeSpaceGB,2)};Label="Free Space (GB)"} | Sort-Object Name
+    $ESXiDS = Get-DataStore | Select-object Name, State, @{E={[Math]::Round($_.CapacityGB,2)};Label="Capacity (GB"}, @{E={[Math]::Round($_.FreeSpaceGB,2)};Label="Free Space (GB)"} | Sort-Object Name
     
     $TotalESXiDS = $ESXiDS | Measure-Object | Select-object -ExpandProperty Count
     $TotalESXiVMs = $ESXiVMS | Measure-Object | Select-object -ExpandProperty Count    
@@ -500,16 +527,8 @@ Else {
 
 }
 
-$DRSEventsToday = Get-VIEvent -MaxSamples 500 -Start $(Get-Date).ToString('MM/dd/yyyy') | Where {$_.FullFormattedMessage -like "*Migrating*"} `
+$DRSEventsToday = Get-VIEvent -MaxSamples 10000 -Start $(Get-Date).ToString('MM/dd/yyyy') | Where {$_.FullFormattedMessage -like "*Migrating*"} `
 | Where {$_.Objectname -ne $Null} | Select @{E={$_.Objectname};Name="VM"}, @{E={$_.CreatedTime};Name="Time"}, @{E={$_.FullFormattedMessage};Name="DRS vMotion detail"} | Sort VM -Unique
-
-
-If (-not($DRSEventsToday)) {
-
-    $DRSEventsToday = "No DRS events recorded for $($(Get-Date).ToString('MM/dd/yyyy'))"
-
-}
-
 
 ### Data Summary
 $Section1 = $MainArray | Select-object Asset, PingResults, UptimeDays, UptimeHigh, @{Expression={$_.cDriveSize};Label="C Drive Size (GB)"} , @{Expression={$_.CDriveFree};Label="C Drive Free (GB)"},`
@@ -530,7 +549,7 @@ ForEach ($Asset in $RebootPool) {
     write-warning "Rebooting $Asset now"
     start-sleep -s 30
     restart-computer -ComputerName $Asset -Force -Timeout 60 -wait
-    Write-Log2TXT -message "$Asset was rebooted" -Level WARN -ScriptLog $ScriptLog
+    Write-CustomLog -message "$Asset was rebooted" -Level WARN -ScriptLog $ScriptLog
 }
 
 ### Email code
@@ -541,9 +560,10 @@ $Pre1 = "<H2>Part 1 - Desktop, laptop, server overview data (ping, uptime, C dri
 $Pre1 += "<br><br>"
 $Section1HTML = $Section1 | ConvertTo-HTML -Head $Head -PreContent $Pre1 -As Table | Out-String
 
-### Section 2
+### Section 2 - File server and related scheduled tasks
 $Pre2 = "<br><br>"
-$Pre2 += "<H2>Part 2 - Scheduled tasks report</H2>"
+$Pre2 += "<H2>Part 2 - File server and scheduled tasks info</H2>"
+$Pre2 += "<H3>Current DFS Owner: $FSOwner</H3>"
 $Section2HTML = $Section2 | ConvertTo-HTML -Head $Head -PreContent $Pre2 -As Table | Out-String
 
 ## Section 3a - Vmware assets  
@@ -551,32 +571,41 @@ $Pre3a = "<br><br>"
 $Pre3a += "<H2>Part 3a - VMWARE vCenter asset report ($TotalESXIVMs VMS) </H2>"
 $Section3aHTML = $ESXiVMS | ConvertTo-HTML -Head $Head -PreContent $Pre3a -As Table | Out-String
 
-<## Section 3b - Vmware Datastore (Dormant as of May 14, 2019)
+## Section 3b - Vmware Datastore (Dormant as of May 14, 2019)
 $Pre3b = "<br><br>"
 $Pre3b += "<H2>Part 3b - VMWARE vCenter DataStore report ($TotalESXiDS datastores)</H2>"
 $Pre3b += "<br><br>"
 $Section3bHTML = $ESXiDS | ConvertTo-HTML -Head $Head -PreContent $Pre3b -As Table | Out-String
-#>
 
-## Section 3b - VMWARE DRS events
-$Pre3b = "<br><br>"
-$Pre3b += "<H2>Part 3b - VMWARE vCenter DRS events from today</H2>"
-$Section3bHTML = $DRSEventsToday | ConvertTo-HTML -Head $Head -PreContent $Pre3b -As Table | Out-String
+## Section 3c - VMWARE DRS events
+If (-not($DRSEventsToday)) {
 
-## Section 3c - Vmware hosts
-$Pre3c = "<br><br>"
-$Pre3c += "<H2>Part 3c - VMWARE vCenter hosts</H2>"
-$Section3cHTML = $ESXiHostSummary | ConvertTo-HTML -Head $Head -PreContent $Pre3c -As Table | Out-String
+    $Pre3c = "<br><br>"
+    $Pre3c += "<H2>Part 3c - NO VMWARE vCenter DRS events from today</H2>"
+    $Pre3c += "<br><br>"
+    $Section3cHTML = $Pre3c
+}
 
-### Section XTRA - DFS
-$Pre4 += "<H2>XTRA - Current DFS Owner: $FSOwner</H2>"
+Else {
+
+    $Pre3c = "<br><br>"
+    $Pre3c += "<H2>Part 3c - VMWARE vCenter DRS events from today</H2>"
+    $Pre3c += "<br><br>"    
+    $Section3cHTML = $DRSEventsToday | ConvertTo-HTML -Head $Head -PreContent $Pre3c -As Table | Out-String
+
+}
+
+## Section 3d - Vmware hosts
+$Pre3d = "<br><br>"
+$Pre3d += "<H2>Part 3d - VMWARE vCenter hosts</H2>"
+$Section3dHTML = $ESXiHostSummary | ConvertTo-HTML -Head $Head -PreContent $Pre3d -As Table | Out-String
 
 ## Combine sections
 $TSBody = ""
-$TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + "$Section3cHTML" + "$Pre4"
+$TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + "$Section3cHTML" + "$Section3dHTML"
 
 $Subject = "Daily systems report for $ShortDate"
-Write-Log2TXT -Message "Sending message to $EmailTo" -Level INFO -ScriptLog $ScriptLog
+Write-CustomLog -Message "Sending message to $EmailTo" -Level INFO -ScriptLog $ScriptLog
 Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl
 
 $ScriptEnd = Get-Date
@@ -587,4 +616,4 @@ $Mins = $TotalScriptTime | Select-object -expand Minutes
 $Seconds = $TotalScriptTime | Select-object -expand Seconds
 
 Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventID $EventID -EntryType Information -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds"
-Write-Log2TXT -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Level INFO -ScriptLog $ScriptLog
+Write-CustomLog -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Level INFO -ScriptLog $ScriptLog
