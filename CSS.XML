@@ -1,0 +1,23 @@
+<style>
+  body {
+    font-family: "Arial";
+    font-size: 8pt;
+    color: #4C607B;
+    }
+  th, td { 
+    border: 1px solid #e57300;
+    border-collapse: collapse;
+    padding: 5px;
+    }
+  th {
+    font-size: 1.2em;
+    text-align: left;
+    background-color: #003366;
+    color: #ffffff;
+    }
+  td {
+    color: #000000;
+    }
+  .even { background-color: #6495ED; }
+  .odd { background-color: #47d147; }
+</style>
