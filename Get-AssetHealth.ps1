@@ -49,8 +49,21 @@ July 26, 2019
 -Corrected missing $True on Set-StartPolicy
 
 July 28, 2019
--Get-VIEvent -MaxSamples changed to 10000 to accomodate for vCenter setups where vSan is enabled
+-vSan activated on RS2/RS3 on July 27, 2019 means a lot more events, as such Get-VIEvent -MaxSamples changed to 10000 to accomodate 
 -VMWARE Datastore capacity rounded
+
+Sept 20, 2019
+-Changed DRS events range
+
+Aug 10, 2020
+-Added check / install of Nuget module
+-Added check / install of PowerCLI module
+
+Aug 11, 2020
+-Updated to include new variables for use with email via Gmail SMTP
+
+Sept 2, 2020
+-Various DFS node/owner code updates
 
 .DESCRIPTION
 Author oreynolds@gmail.com
@@ -281,8 +294,6 @@ Function Get-SchedTasks {
             TaskName = $Task.TaskName
             LastRunResult = $LastTaskResult
             LastRunTime = $Task.LastRunTime
-            OwnerNode = $Asset
-
         }
 
     }
@@ -292,13 +303,25 @@ Function Get-SchedTasks {
 
 } # End get-Tasks
 
+IF (-not(Get-PackageProvider -ListAvailable -name NUget)) {
+
+    Install-PackageProvider -Name NuGet -force -Confirm:$False
+}
+
+IF (-not(Get-Module -ListAvailable -name VMware.PowerCLI)) {
+
+    Install-Module -Name VMware.PowerCLI -AllowClobber -force
+}
 
 ### Non-XML variables, amend as required for your environment
 $EventIDSrc = "Asset Scan"
 $EventIDSection = "Application"
 [Int32]$EventID = 0
-$RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
+
 $ShortDate = (Get-Date).ToString('MM-dd-yyyy')
+$Yesterday = (Get-Date).AddDays(-1).ToString('MM-dd-yyyy')
+
+$RunningPath = Split-Path $MyInvocation.MyCommand.Path -Parent
 
 $ESXiHostSummary = @()
 $MainArray = @()
@@ -310,7 +333,8 @@ If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
 
 }
 
-$XMLSet = ""
+Remove-Variable XMLSet
+#XMLSet = ""
 [XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
 
 $ScriptLog = $XMLSet.Properties.Global.ScriptLog
@@ -333,6 +357,10 @@ Else {
 $EmailFrom = $XMLSet.Properties.Global.Email.From
 $EmailTo = $XMLSet.Properties.Global.Email.To
 $EmailSMTP = $XMLSet.Properties.Global.Email.SMTP
+$EmailPort = $XMLSet.Properties.Global.EMail.Port
+$EmailPassW = $XMLSet.Properties.Global.Email.PassW
+$EmailCred = New-Object Management.Automation.PSCredential $EmailFrom, ($EmailPassW | ConvertTo-SecureString -AsPlainText -Force)
+
 $CSS = $XMLSet.Properties.Global.CSS
 $ReportsPath = $XMLSet.Properties.Global.ReportsPath
 $FilteredAssets = $XMLSet.Properties.Global.FilteredAssets.Asset
@@ -340,7 +368,6 @@ $FilteredESXi = $XMLSet.Properties.Global.vMWARE.FilteredESXi.Asset
 $vCenter = $XMLSet.Properties.Global.VMWARE.vCenter
 $DFSPath = $XMLSet.Properties.Global.DFSPath
 [String]$SchTask = $XMLSet.Properties.Global.SchTask
-
 
 If (!(test-path $ScriptLog)) {
 
@@ -467,8 +494,11 @@ Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -M
 write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
-$FSOwner = (Get-DFSNFolderTarget -path $DFSPath | Where-Object {$_.state -eq "Online"} | Select-object -expand TargetPath).Split("\")[2]
-$Section2 =  Get-SchedTasks -Asset $FSOwner -SchTask $SchTask
+Remove-variable Items
+$DFSOwner = (dfsutil.exe client property state \\ad.getvpro.com\DFS\downloads) | ForEach {$items += $_.split("=")  }
+$DFSOwner = $Items | Where {$_ -like "Active, Online*"}
+$DFSOwner = ($Items | Where {$_ -like "Active, Online*"}).Split("\\")[2]
+$Section2 =  Get-SchedTasks -Asset $DFSOwner -SchTask $SchTask
 
 ### Part 3a/b/c - VMWARE vCenter asset scan
 
@@ -477,7 +507,9 @@ Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -M
 IF (Get-Module -name vmware.powercli -ListAvailable) {
     write-host "Loading VMWARE PowerCLI"
     Import-Module -Name VMware.VimAutomation.Core -ErrorAction SilentlyContinue
+    
     #Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $False -Confirm:$False
+    
     Connect-VIServer -Server $vCenter -force
 
     write-host "Level set of VMs autostart"
@@ -527,7 +559,7 @@ Else {
 
 }
 
-$DRSEventsToday = Get-VIEvent -MaxSamples 10000 -Start $(Get-Date).ToString('MM/dd/yyyy') | Where {$_.FullFormattedMessage -like "*Migrating*"} `
+$DRSEventsToday = Get-VIEvent -MaxSamples 10000 -Start $Yesterday | Where {$_.FullFormattedMessage -like "*Migrating*"} `
 | Where {$_.Objectname -ne $Null} | Select @{E={$_.Objectname};Name="VM"}, @{E={$_.CreatedTime};Name="Time"}, @{E={$_.FullFormattedMessage};Name="DRS vMotion detail"} | Sort VM -Unique
 
 ### Data Summary
@@ -537,7 +569,7 @@ Type, CPU, Mem, OS, PowerPlan, HotFixRecent | Sort-Object UptimeDays -Descending
 $Section1 | Export-csv $ReportsPath\AssetScan-$Shortdate.csv -NoTypeInformation
 
 ### Reboots of assets with uptime over 14 days
-
+write-host "`r`n"
 write-host "Asset scan has completed at $(Get-date). Assets with 14 days or more will be rebooted"
 write-host "`r`n"
 
@@ -563,7 +595,7 @@ $Section1HTML = $Section1 | ConvertTo-HTML -Head $Head -PreContent $Pre1 -As Tab
 ### Section 2 - File server and related scheduled tasks
 $Pre2 = "<br><br>"
 $Pre2 += "<H2>Part 2 - File server and scheduled tasks info</H2>"
-$Pre2 += "<H3>Current DFS Owner: $FSOwner</H3>"
+$Pre2 += "<H3>DFS Node Status: $DFSOwner</H3>"
 $Section2HTML = $Section2 | ConvertTo-HTML -Head $Head -PreContent $Pre2 -As Table | Out-String
 
 ## Section 3a - Vmware assets  
@@ -606,7 +638,8 @@ $TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTM
 
 $Subject = "Daily systems report for $ShortDate"
 Write-CustomLog -Message "Sending message to $EmailTo" -Level INFO -ScriptLog $ScriptLog
-Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl
+
+Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl -Credential $EmailCred -Port $EmailPort
 
 $ScriptEnd = Get-Date
 
@@ -616,4 +649,5 @@ $Mins = $TotalScriptTime | Select-object -expand Minutes
 $Seconds = $TotalScriptTime | Select-object -expand Seconds
 
 Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -EventID $EventID -EntryType Information -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds"
+
 Write-CustomLog -Message "Script completed. Total processing time of $Hours hours, $Mins mins, $Seconds seconds" -Level INFO -ScriptLog $ScriptLog
