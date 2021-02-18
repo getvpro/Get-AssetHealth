@@ -65,6 +65,21 @@ Aug 11, 2020
 Sept 2, 2020
 -Various DFS node/owner code updates
 
+Sept 27, 2020
+-Updated to filter out AD objects with custom OS of "vmware" set
+
+Nov 4, 2020
+-Added AD Account info section: Showing account status, name and pw expiration date
+
+Nov 11, 2020
+-Updated to filter out vCLS objects
+
+Feb 16, 2021
+-Code to check check for remaining licensing days left added back
+
+Feb 18, 2020
+-Code hygiene
+
 .DESCRIPTION
 Author oreynolds@gmail.com
 
@@ -171,12 +186,26 @@ Function Get-Uptime {
 
 }
 
-Function Get-LicDaysRemain {
+Function Get-LicStatus {
     Param ($Asset)
-    $LicDaysRem = Get-CimInstance SoftwareLicensingProduct -ComputerName $Asset `
-    -Filter "ApplicationID = '55c92734-d682-4d71-983e-d6ec3f16059f'" | Where-Object licensestatus -eq 1 | Select-object -expand GracePeriodRemaining
-    $LicDaysRem = new-timespan -minutes $LicDaysRem | Select-object -ExpandProperty Days    
-    Write-warning "Remaining licensing days left = $LicDaysRem"
+    
+    $LicDaysRem = Get-CimInstance SoftwareLicensingProduct -ComputerName $Asset -Filter "ApplicationID = '55c92734-d682-4d71-983e-d6ec3f16059f'" | Where-Object -FilterScript {$_.LicenseFamily -like "*eval*"} `
+    | Select-object -expand GracePeriodRemaining
+
+    IF ($LicDaysRem -ne $Null) {  
+    
+        $LicDaysRem = new-timespan -minutes $LicDaysRem | Select-object -ExpandProperty Days    
+        Write-warning "Remaining licensing days left = $LicDaysRem"
+
+    }
+
+    Else {
+
+        $LicDaysRem = "Valid license installed"
+        
+
+    }
+    
     Return $LicDaysRem
 }
 
@@ -334,7 +363,7 @@ If (-not([System.Diagnostics.EventLog]::SourceExists("$EventIDSrc"))) {
 }
 
 Remove-Variable XMLSet
-#XMLSet = ""
+
 [XML]$XMLSet = Get-Content ($RunningPath + "\Settings.xml")
 
 $ScriptLog = $XMLSet.Properties.Global.ScriptLog
@@ -392,8 +421,10 @@ If (Get-Module -ListAvailable ActiveDirectory) {
 
 }
 
-$Assets = Get-ADComputer -Filter * | Sort-Object DNSHostname | Select-object -Expand Name
-$Assets = $Assets | Where {$_ -notin $FilteredAssets}
+Get-ADComputer -LDAPFilter "(OperatingSystem=vmware)"
+
+$Assets = Get-ADComputer -Filter {OperatingSystem -ne 'vmware'} | Sort-Object DNSHostname | Select-object -Expand Name
+$Assets = $Assets | Where-object {$_ -notin $FilteredAssets}
 
 If (-not($Assets)) {
 
@@ -427,8 +458,8 @@ ForEach ($Asset in $Assets) {
             $UptimeDays  = [int]$Uptime[1]
             $UptimeHigh = $Uptime[2]
 
-            #write-host "Collecting licensed OS days remaining"
-            #$LicDaysLeft = Get-LicDaysRemain $Asset
+            write-host "Collecting licensed OS days remaining"
+            $LicStatus = Get-LicStatus $Asset
             
             write-host "Checking C drive size/space free"
             $CDrive = Get-DrvSpace -Asset $Asset -Drv c:
@@ -449,7 +480,7 @@ ForEach ($Asset in $Assets) {
             $PowerPlanActive = Get-PowerPlan -Asset $Asset
 
             write-host "Collecting most recent Hotfix"
-            $HotFixRecent = Get-HotfixRecent -Asset $Asset           
+            $HotFixRecent = Get-HotfixRecent -Asset $Asset
  
     } #Ping        
 
@@ -458,6 +489,7 @@ ForEach ($Asset in $Assets) {
         write-host "$Asset offline" -ForegroundColor red
         $UptimeDays = "N/A"
         $UptimeHigh = "N/A"
+        $LicStatus = "N/A"
         $CDrive = ""
         $Type = "N/A"
         $CPU = "N/A"
@@ -471,7 +503,8 @@ ForEach ($Asset in $Assets) {
     Asset = $Asset
     PingResults = $Ping
     UptimeDays = $Uptimedays
-    UptimeHigh = $UptimeHigh    
+    UptimeHigh = $UptimeHigh
+    LicStatus = $LicStatus
     CDriveSize = $CDrive[0]
     CDriveFree = $CDrive[1]
     Type = $Type
@@ -495,9 +528,9 @@ write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
 Remove-variable Items
-$DFSOwner = (dfsutil.exe client property state \\ad.getvpro.com\DFS\downloads) | ForEach {$items += $_.split("=")  }
-$DFSOwner = $Items | Where {$_ -like "Active, Online*"}
-$DFSOwner = ($Items | Where {$_ -like "Active, Online*"}).Split("\\")[2]
+$DFSOwner = (dfsutil.exe client property state \\ad.getvpro.com\DFS\Binaries) | ForEach {$items += $_.split("=")  }
+$DFSOwner = $Items | Where-object {$_ -like "Active, Online*"}
+$DFSOwner = ($Items | Where-object {$_ -like "Active, Online*"}).Split("\\")[2]
 $Section2 =  Get-SchedTasks -Asset $DFSOwner -SchTask $SchTask
 
 ### Part 3a/b/c - VMWARE vCenter asset scan
@@ -513,10 +546,9 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
     Connect-VIServer -Server $vCenter -force
 
     write-host "Level set of VMs autostart"
-    Get-VMhost | Get-VMHostStartPolicy | Where {$_.enabled -eq $False} | Set-VMHostStartPolicy -Enabled:$True
-    Get-VM | Where {$_.name -notin $FilteredESXi} | Get-VMStartPolicy | Where StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
-
-    $ESXiVMS = Get-VM | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}},`
+    Get-VMhost | Get-VMHostStartPolicy | Where-object {$_.enabled -eq $False} | Set-VMHostStartPolicy -Enabled:$True
+    Get-VM | Where-object {$_.name -notin $FilteredESXi} | Where-object {$_.name -notlike "vCLS (*)"} | Get-VMStartPolicy | Where-object StartOrder -eq $Null | Set-VMStartPolicy -StartAction PowerOn -StartDelay 30
+    $ESXiVMS = Get-VM | Where-object {$_.name -notlike "vCLS (*)"} | Select-object Name, VMHost, @{N="Datastore";E={[string]::Join(',',(Get-Datastore -Id $_.DatastoreIdList | Select-object -ExpandProperty Name))}},`
     PowerState, @{E={[math]::Round($_.UsedSpaceGB,2)};Name="Used Space (GB)"}, NumCPU, MemoryGB
     
     $ESXiDS = Get-DataStore | Select-object Name, State, @{E={[Math]::Round($_.CapacityGB,2)};Label="Capacity (GB"}, @{E={[Math]::Round($_.FreeSpaceGB,2)};Label="Free Space (GB)"} | Sort-Object Name
@@ -529,7 +561,7 @@ IF (Get-Module -name vmware.powercli -ListAvailable) {
     ForEach ($ESXiVMHost in $ESXiVMHosts) {
     
         write-host "Checking $ESXiVMHost.name"
-        $ESXIVmCount = Get-VMhost -Name $ESXiVMHost.name  | Get-VM | Measure-Object | Select-Object -ExpandProperty Count
+        $ESXIVmCount = Get-VMhost -Name $ESXiVMHost.name  | Get-VM | Where-object {$_.name -notlike "vCLS (*)"} | Measure-Object | Select-Object -ExpandProperty Count
         $ESXiHostData = Get-VMHost -name $ESXiVMHost.name  | Select-object Name, ConnectionState, PowerState, Model, NumCPU, ProcessorType, Version, Build,`
         @{E={[math]::Round($_.MemoryTotalGB,2)};Label='Host Memory (GB)'}, @{E={[math]::Round($_.MemoryUsageGB,2)};Label="Host memory in use (GB)"}
     
@@ -559,11 +591,11 @@ Else {
 
 }
 
-$DRSEventsToday = Get-VIEvent -MaxSamples 10000 -Start $Yesterday | Where {$_.FullFormattedMessage -like "*Migrating*"} `
-| Where {$_.Objectname -ne $Null} | Select @{E={$_.Objectname};Name="VM"}, @{E={$_.CreatedTime};Name="Time"}, @{E={$_.FullFormattedMessage};Name="DRS vMotion detail"} | Sort VM -Unique
+$DRSEventsToday = Get-VIEvent -MaxSamples 10000 -Start $Yesterday | Where-object {$_.FullFormattedMessage -like "*Migrating*"} `
+| Where-object {$_.Objectname -ne $Null} | Select @{E={$_.Objectname};Name="VM"}, @{E={$_.CreatedTime};Name="Time"}, @{E={$_.FullFormattedMessage};Name="DRS vMotion detail"} | Sort VM -Unique
 
 ### Data Summary
-$Section1 = $MainArray | Select-object Asset, PingResults, UptimeDays, UptimeHigh, @{Expression={$_.cDriveSize};Label="C Drive Size (GB)"} , @{Expression={$_.CDriveFree};Label="C Drive Free (GB)"},`
+$Section1 = $MainArray | Select-object Asset, PingResults, UptimeDays, UptimeHigh, LicStatus, @{Expression={$_.cDriveSize};Label="C Drive Size (GB)"} , @{Expression={$_.CDriveFree};Label="C Drive Free (GB)"},`
 Type, CPU, Mem, OS, PowerPlan, HotFixRecent | Sort-Object UptimeDays -Descending
 
 $Section1 | Export-csv $ReportsPath\AssetScan-$Shortdate.csv -NoTypeInformation
@@ -584,8 +616,62 @@ ForEach ($Asset in $RebootPool) {
     Write-CustomLog -message "$Asset was rebooted" -Level WARN -ScriptLog $ScriptLog
 }
 
-### Email code
-$Head = Get-Content $CSS
+### HTML  code
+### https://adamtheautomator.com/powershell-convertto-html/
+$Head = Get-Content "\\ad.getvpro.com\DFS\BINARIES\Software\SCRIPTS\WINDOWS SERVER\Get-AssetHealth\CSS\CSS.XML"
+
+<#
+$Head = @"
+<style>
+
+    h1 {
+
+        font-family: Arial, Helvetica, sans-serif;
+        color: #e68a00;
+        font-size: 28px;
+
+    }
+
+    
+    h2 {
+
+        font-family: Arial, Helvetica, sans-serif;
+        color: #000099;
+        font-size: 16px;
+
+    }
+
+    
+    
+   table {
+		font-size: 12px;
+		border: 0px; 
+		font-family: Arial, Helvetica, sans-serif;
+	} 
+	
+    td {
+		padding: 4px;
+		margin: 0px;
+		border: 0;
+	}
+	
+    th {
+        background: #395870;
+        background: linear-gradient(#49708f, #293f50);
+        color: #fff;
+        font-size: 11px;
+        text-transform: uppercase;
+        padding: 10px 15px;
+        vertical-align: middle;
+	}
+
+    tbody tr:nth-child(even) {        
+        background: #a9a9a9;
+    }
+        
+</style>
+"@
+#>
 
 ### Section 1
 $Pre1 = "<H2>Part 1 - Desktop, laptop, server overview data (ping, uptime, C drive free space, hot fix installs) - Data is from $(Get-Date)</H2>"
@@ -632,14 +718,32 @@ $Pre3d = "<br><br>"
 $Pre3d += "<H2>Part 3d - VMWARE vCenter hosts</H2>"
 $Section3dHTML = $ESXiHostSummary | ConvertTo-HTML -Head $Head -PreContent $Pre3d -As Table | Out-String
 
-## Combine sections
-$TSBody = ""
-$TSBody += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + "$Section3cHTML" + "$Section3dHTML"
+## Section 4 - AD Account state, expiration
+
+$ADAccounts = Get-ADUser -filter {PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" | Where-object {$_.DisplayName.Length -ne 0} `
+| Select-Object -Property "Displayname", Enabled, @{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}} | Sort-Object ExpiryDate | `
+ Select @{E={$_.DisplayName};Name='Account'}, @{E={$_.Enabled};Name='Account enabled'}, @{E={$_.ExpiryDate};Name='Password Expiration date'} 
+
+$Pre4 = "<br><br>"
+$Pre4 += "<H2>Part 4 - AD Account info</H2>"
+$Section4HTML = $ADAccounts | ConvertTo-HTML -Head $Head -PreContent $Pre4 -As Table | Out-String
 
 $Subject = "Daily systems report for $ShortDate"
+
+## Combine sections
+$HTMLReport = ""
+#$HTMLReport = ConvertTo-HTML -Body "$Section1HTML $Section2HTML $Section3aHTML $Section3bHTML $Section3cHTML $Section3dHTML $Section4HTML" #-Title $Subject
+$HTMLReport += "$Section1HTML" + "$Section2HTML" + "$Section3aHTML" + "$Section3bHTML" + "$Section3cHTML" + "$Section3dHTML" + "$Section4HTML"
+
+<#
+$HTMLReport | Out-file "c:\installs\Get-AssetHealth-Test-Report.html"
+Write-Warning "TEMP EXIT"
+EXIT
+#>
+
 Write-CustomLog -Message "Sending message to $EmailTo" -Level INFO -ScriptLog $ScriptLog
 
-Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $TSBody -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl -Credential $EmailCred -Port $EmailPort
+Send-MailMessage -From $EmailFrom -to $EmailTo -Subject $Subject -Body $HTMLReport -BodyAsHtml -SmtpServer $EmailSMTP -UseSsl -Credential $EmailCred -Port $EmailPort
 
 $ScriptEnd = Get-Date
 
