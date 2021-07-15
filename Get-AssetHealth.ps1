@@ -80,6 +80,12 @@ Feb 16, 2021
 Feb 18, 2020
 -Code hygiene
 
+June 14, 2021
+-Required AD snap-ins will be installed as required for Win 10 / Server 201x
+
+July 15, 2021
+-Added Write-host for status on module installs
+
 .DESCRIPTION
 Author oreynolds@gmail.com
 
@@ -333,13 +339,16 @@ Function Get-SchedTasks {
 } # End get-Tasks
 
 IF (-not(Get-PackageProvider -ListAvailable -name NUget)) {
-
+	
+	Write-host "Installing Package provider nuget"
     Install-PackageProvider -Name NuGet -force -Confirm:$False
 }
 
 IF (-not(Get-Module -ListAvailable -name VMware.PowerCLI)) {
 
+	Write-host "Installing VMwarae PowerCLI modules"
     Install-Module -Name VMware.PowerCLI -AllowClobber -force
+    
 }
 
 ### Non-XML variables, amend as required for your environment
@@ -421,7 +430,34 @@ If (Get-Module -ListAvailable ActiveDirectory) {
 
 }
 
-Get-ADComputer -LDAPFilter "(OperatingSystem=vmware)"
+Else {
+
+    write-warning "EXIT as PS AD modules not available, attempting to install"
+
+
+    IF ((Get-WMIObject -class win32_operatingsystem).Caption -like "*Server*") {
+
+    write-host "Windows server OS confirmed, proceeding with windows feature changes" -ForegroundColor cyan
+
+        IF ((Get-WindowsFeature RSAT-AD-Tools).Installed -eq $False) {
+
+        write-host "Installing AD remote admin feature"
+        Install-WindowsFeature RSAT-AD-Tools
+
+        }   
+    
+    }
+
+    Else {
+
+        Add-WindowsCapability -Online -name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0"
+    }
+
+}
+
+####
+
+# Get-ADComputer -LDAPFilter "(OperatingSystem=vmware)"
 
 $Assets = Get-ADComputer -Filter {OperatingSystem -ne 'vmware'} | Sort-Object DNSHostname | Select-object -Expand Name
 $Assets = $Assets | Where-object {$_ -notin $FilteredAssets}
@@ -718,7 +754,7 @@ $Pre3d = "<br><br>"
 $Pre3d += "<H2>Part 3d - VMWARE vCenter hosts</H2>"
 $Section3dHTML = $ESXiHostSummary | ConvertTo-HTML -Head $Head -PreContent $Pre3d -As Table | Out-String
 
-## Section 4 - AD Account state, expiration
+## Section 4 - AD Account state, service IDs, expiration
 
 $ADAccounts = Get-ADUser -filter {PasswordNeverExpires -eq $False} –Properties "DisplayName", "msDS-UserPasswordExpiryTimeComputed" | Where-object {$_.DisplayName.Length -ne 0} `
 | Select-Object -Property "Displayname", Enabled, @{Name="ExpiryDate";Expression={[datetime]::FromFileTime($_."msDS-UserPasswordExpiryTimeComputed")}} | Sort-Object ExpiryDate | `
