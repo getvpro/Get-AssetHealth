@@ -559,12 +559,12 @@ ForEach ($Asset in $Assets) {
 ### End of Part 1 - main scan
 
 ### Part 2 - Scheduled tasks
-Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "Part 2 - collecting schedled tasks" -EntryType Information
+Write-EventLog -LogName $EventIDSection -Source $EventIDSrc -eventID $EventID -Message "Part 2 - collecting schedueld tasks" -EntryType Information
 write-host "Checking scheduled tasks on various servers"
 ### ID current FS owner
 
 Remove-variable Items
-$DFSOwner = (dfsutil.exe client property state \\ad.getvpro.com\DFS\Binaries) | ForEach {$items += $_.split("=")  }
+$DFSOwner = (dfsutil.exe client property state $DFSPath) | ForEach {$items += $_.split("=")  }
 $DFSOwner = $Items | Where-object {$_ -like "Active, Online*"}
 $DFSOwner = ($Items | Where-object {$_ -like "Active, Online*"}).Split("\\")[2]
 $Section2 =  Get-SchedTasks -Asset $DFSOwner -SchTask $SchTask
@@ -654,7 +654,7 @@ ForEach ($Asset in $RebootPool) {
 
 ### HTML  code
 ### https://adamtheautomator.com/powershell-convertto-html/
-$Head = Get-Content "\\ad.getvpro.com\DFS\BINARIES\Software\SCRIPTS\WINDOWS SERVER\Get-AssetHealth\CSS\CSS.XML"
+$Head = Get-Content $CSS
 
 <#
 $Head = @"
